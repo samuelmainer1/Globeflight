@@ -1,0 +1,29 @@
+Globeflight Kenya — complete copy of the site we built
+
+website
+  Put these files in public_html when you need to restore the public site.
+  This folder has the pages, pictures, video, admin dashboard, gf-proxy.php,
+  gf-article.php, and .htaccess.
+  The live site is already using these files. Keep this as your backup.
+  Do not copy this folder over the logistics-backend program.
+
+source
+  This is the project that builds the site. It does not include node_modules.
+  The Door-to-Door article is here:
+  source/server/data/db.json
+  Title: Door-to-Door Shipping to Kenya: What Importers Should Know
+  That article is not in the live dashboard until you create it there.
+
+  Five large pictures were left out of source/src/assets because the same
+  pictures are already in the website folder:
+  website/logo.png
+  website/cta1.jpg
+  website/profile2.jpg
+  website/assets/profile-DpRyEMp0.jpg
+  website/assets/profile3-ESPjy1o2.jpg
+
+To run the local site on a computer:
+  npm install
+  npm run server
+  npm run dev
+  Open http://127.0.0.1:5173/blog
