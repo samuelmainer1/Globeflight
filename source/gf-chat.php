@@ -364,6 +364,8 @@ function gf_chat_dispatch(&$db, $method, $op, $id, $body, $token, $staff) {
         foreach ($chats as $chat) {
             $messages = gf_chat_messages_for($db, $chat['id']);
             $last = count($messages) ? $messages[count($messages) - 1] : null;
+            $publicMessages = array();
+            foreach (array_slice($messages, -40) as $message) $publicMessages[] = gf_chat_public_message($message);
             $rows[] = array(
                 'id' => (int) $chat['id'],
                 'visitorName' => !empty($chat['visitorName']) ? $chat['visitorName'] : 'Visitor',
@@ -373,6 +375,7 @@ function gf_chat_dispatch(&$db, $method, $op, $id, $body, $token, $staff) {
                 'updatedAt' => $chat['updatedAt'],
                 'preview' => $last ? gf_chat_clip($last['text'], 90) : '',
                 'lastFrom' => $last ? $last['from'] : '',
+                'messages' => $publicMessages,
             );
         }
         return array(200, array('success' => true, 'data' => array(
@@ -410,6 +413,7 @@ function gf_chat_dispatch(&$db, $method, $op, $id, $body, $token, $staff) {
     if ($method === 'POST' && $op === 'reply') {
         $text = gf_chat_clip(isset($body['text']) ? $body['text'] : '', 1000);
         if ($text === '') return gf_chat_fail(400, 'Write a reply first.');
+        if ($id === '' && isset($body['chatId'])) $id = (string) $body['chatId'];
         $chatIndex = gf_chat_find_id($db, $id);
         if ($chatIndex === null) return gf_chat_fail(404, 'Chat not found.');
         $now = gmdate('c');
@@ -543,11 +547,47 @@ function gf_chat_staff_from_request() {
     return $user;
 }
 
+function gf_chat_json($payload) {
+    $flags = JSON_UNESCAPED_UNICODE;
+    if (defined('JSON_INVALID_UTF8_SUBSTITUTE')) $flags |= JSON_INVALID_UTF8_SUBSTITUTE;
+    $json = json_encode($payload, $flags);
+    if ($json === false) return '';
+    return $json;
+}
+
+function gf_chat_request_chat_id($queryId, $body) {
+    $found = array();
+    if (isset($_GET['chat'])) $found[] = $_GET['chat'];
+    if ($queryId !== '') $found[] = $queryId;
+    if (is_array($body) && isset($body['chatId'])) $found[] = $body['chatId'];
+    $headerBags = array();
+    if (function_exists('getallheaders')) $headerBags[] = getallheaders();
+    if (function_exists('apache_request_headers')) $headerBags[] = apache_request_headers();
+    foreach ($headerBags as $headers) {
+        if (!is_array($headers)) continue;
+        foreach ($headers as $name => $value) {
+            if (strtolower((string) $name) === 'x-gf-chat') $found[] = $value;
+        }
+    }
+    foreach (array('HTTP_X_GF_CHAT', 'REDIRECT_HTTP_X_GF_CHAT') as $key) {
+        if (!empty($_SERVER[$key])) $found[] = $_SERVER[$key];
+        $env = getenv($key);
+        if (is_string($env) && $env !== '') $found[] = $env;
+    }
+    foreach ($found as $value) {
+        $value = trim((string) $value);
+        if (preg_match('/^\d+$/', $value)) return $value;
+    }
+    return '';
+}
+
 function gf_chat_respond($status, $payload) {
     http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
-    echo json_encode($payload);
+    $json = gf_chat_json($payload);
+    if ($json === '') $json = '{"success":false,"message":"The chat could not be read."}';
+    echo $json;
     exit;
 }
 
@@ -559,13 +599,13 @@ if (PHP_SAPI !== 'cli' && isset($_SERVER['SCRIPT_FILENAME']) && realpath((string
         exit;
     }
     $op = isset($_GET['op']) ? (string) $_GET['op'] : '';
-    $id = isset($_GET['id']) ? (string) $_GET['id'] : '';
-    if ($id !== '' && !preg_match('/^\d+$/', $id)) gf_chat_respond(400, array('success' => false, 'message' => 'Not found.'));
     $raw = file_get_contents('php://input');
     if ($raw === false) $raw = '';
     if (strlen($raw) > 20000) gf_chat_respond(400, array('success' => false, 'message' => 'That message is too long.'));
     $body = json_decode($raw, true);
     if (!is_array($body)) $body = array();
+    $queryId = isset($_GET['id']) ? (string) $_GET['id'] : '';
+    $id = gf_chat_request_chat_id($queryId, $body);
     $token = isset($_SERVER['HTTP_X_CHAT_TOKEN']) ? (string) $_SERVER['HTTP_X_CHAT_TOKEN'] : '';
     $staffOps = array('presence', 'inbox', 'contacts', 'thread', 'reply');
     $staff = in_array($op, $staffOps, true) ? gf_chat_staff_from_request() : null;
@@ -578,9 +618,15 @@ if (PHP_SAPI !== 'cli' && isset($_SERVER['SCRIPT_FILENAME']) && realpath((string
     $db = json_decode($stored ? $stored : '', true);
     if (!is_array($db)) $db = gf_chat_blank();
     $result = gf_chat_dispatch($db, $method, $op, $id, $body, $token, $staff);
+    $storedJson = gf_chat_json($db);
+    if ($storedJson === '') {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        gf_chat_respond(500, array('success' => false, 'message' => 'The chat could not be saved.'));
+    }
     rewind($handle);
     ftruncate($handle, 0);
-    fwrite($handle, json_encode($db));
+    fwrite($handle, $storedJson);
     fflush($handle);
     flock($handle, LOCK_UN);
     fclose($handle);

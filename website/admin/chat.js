@@ -1,5 +1,5 @@
 (function () {
-  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false };
+  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false, error: '' };
   var panel = null;
   var contactsPage = null;
   var pollTimer = null;
@@ -43,11 +43,29 @@
 
   function api(path, options) {
     return fetch(path, options).then(function (response) {
-      return response.json().catch(function () { return {}; }).then(function (body) {
-        if (!response.ok) throw new Error(body.message || 'Request failed');
+      return response.text().then(function (raw) {
+        var body = {};
+        if (raw) {
+          try { body = JSON.parse(raw); }
+          catch (e) { throw new Error('The chat server sent an unreadable response.'); }
+        }
+        if (!response.ok || body.success === false) throw new Error(body.message || 'Request failed');
         return body;
       });
     });
+  }
+
+  function chatById(id) {
+    for (var i = 0; i < state.chats.length; i++) {
+      if (String(state.chats[i].id) === String(id)) return state.chats[i];
+    }
+    return null;
+  }
+
+  function chatHeaders(id, json) {
+    var headers = authHeaders(json);
+    if (id) headers['X-Gf-Chat'] = String(id);
+    return headers;
   }
 
   function refreshInbox() {
@@ -60,42 +78,73 @@
     }).catch(function () {});
   }
 
+  function showKnownThread(id) {
+    var known = chatById(id);
+    if (!known) return;
+    var previous = state.thread && String(state.thread.id) === String(id) && Array.isArray(state.thread.messages) ? state.thread.messages : [];
+    state.thread = {
+      id: known.id,
+      visitorName: known.visitorName || '',
+      visitorEmail: known.visitorEmail || '',
+      visitorPhone: known.visitorPhone || '',
+      messages: Array.isArray(known.messages) ? known.messages : previous,
+    };
+  }
+
   function openThread(id) {
     state.active = id;
-    return api('/gf-chat.php?op=thread&id=' + id, { headers: authHeaders() }).then(function (body) {
-      state.thread = body.data;
+    state.error = '';
+    showKnownThread(id);
+    if (panel) {
+      fillList();
+      fillStream();
+    }
+    return api('/gf-chat.php?op=thread&chat=' + encodeURIComponent(id) + '&id=' + encodeURIComponent(id), { headers: chatHeaders(id) }).then(function (body) {
+      if (String(state.active) !== String(id)) return;
+      if (body.data && Array.isArray(body.data.messages)) state.thread = body.data;
+      state.error = '';
       if (panel) {
         fillList();
         fillStream();
       }
       if (window.gfRefreshNotes) window.gfRefreshNotes();
-    }).catch(function () {});
+    }).catch(function (error) {
+      if (String(state.active) !== String(id)) return;
+      var visible = state.thread && String(state.thread.id) === String(id) && state.thread.messages && state.thread.messages.length;
+      if (!visible) state.error = error.message || 'This chat could not be opened.';
+      if (panel) fillStream();
+    });
   }
 
   function sendReply() {
     var text = state.draft.trim();
     if (!text || !state.active || state.sending) return;
+    var chatId = state.active;
     state.sending = true;
+    state.error = '';
     var sendButton = document.getElementById('gf-chat-send');
     if (sendButton) sendButton.textContent = 'Sending…';
-    api('/gf-chat.php?op=reply&id=' + state.active, {
+    api('/gf-chat.php?op=reply&chat=' + encodeURIComponent(chatId) + '&id=' + encodeURIComponent(chatId), {
       method: 'POST',
-      headers: authHeaders(true),
-      body: JSON.stringify({ text: text }),
+      headers: chatHeaders(chatId, true),
+      body: JSON.stringify({ text: text, chatId: chatId }),
     }).then(function (body) {
-      state.thread = body.data;
+      if (body.data && Array.isArray(body.data.messages)) state.thread = body.data;
       state.draft = '';
       state.sending = false;
+      state.error = '';
       var input = document.getElementById('gf-chat-draft');
       if (input) input.value = '';
       var sendButton = document.getElementById('gf-chat-send');
       if (sendButton) sendButton.textContent = 'Send';
       fillStream();
       return refreshInbox();
-    }).catch(function () {
+    }).catch(function (error) {
       state.sending = false;
+      state.error = error.message || 'The reply was not sent.';
       var sendButton = document.getElementById('gf-chat-send');
       if (sendButton) sendButton.textContent = 'Send';
+      fillStream();
     });
   }
 
@@ -421,7 +470,7 @@
         dot.style.cssText = 'margin-top:4px;font-size:11px;font-weight:800;color:#5f8a00';
         item.appendChild(dot);
       }
-      item.addEventListener('click', function () { openThread(chat.id); });
+      item.setAttribute('data-chat', String(chat.id));
       list.appendChild(item);
     });
   }
@@ -432,7 +481,7 @@
     var nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
     stream.textContent = '';
     var thread = state.thread && String(state.thread.id) === String(state.active) ? state.thread : null;
-    var messages = thread ? thread.messages : [];
+    var messages = thread && Array.isArray(thread.messages) ? thread.messages : [];
     if (thread && (thread.visitorEmail || thread.visitorPhone)) {
       var card = document.createElement('div');
       card.style.cssText = 'margin-bottom:12px;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #e6eed4';
@@ -447,6 +496,12 @@
       tel.style.cssText = 'font-size:13px;color:#2d3748';
       card.append(who, mail, tel);
       stream.appendChild(card);
+    }
+    if (state.error) {
+      var problem = document.createElement('div');
+      problem.textContent = state.error;
+      problem.style.cssText = 'margin-bottom:10px;padding:8px 10px;border-radius:8px;background:#fff4f4;color:#9b2c2c;font-size:13px';
+      stream.appendChild(problem);
     }
     if (!state.active) {
       var hint = document.createElement('div');
@@ -517,7 +572,14 @@
 
     var list = document.createElement('div');
     list.id = 'gf-chat-list';
-    list.style.cssText = 'width:240px;max-width:46%;border-right:1px solid #eef2e8;overflow:auto;background:#fafbf8';
+    list.style.cssText = 'width:240px;max-width:46%;flex:0 0 240px;border-right:1px solid #eef2e8;overflow:auto;background:#fafbf8;position:relative;z-index:1';
+    list.addEventListener('click', function (event) {
+      var row = event.target.closest ? event.target.closest('[data-chat]') : null;
+      if (!row || !list.contains(row)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openThread(row.getAttribute('data-chat'));
+    });
 
     var thread = document.createElement('div');
     thread.style.cssText = 'flex:1;display:flex;flex-direction:column;min-width:0;background:#f7f8f4';

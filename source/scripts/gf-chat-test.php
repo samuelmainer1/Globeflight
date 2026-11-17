@@ -56,8 +56,20 @@ check('no assistant reply while support is here', $last['from'] === 'visitor' &&
 
 $inbox = gf_chat_dispatch($db, 'GET', 'inbox', '', array(), '', $staff);
 check('support can see the chat', $inbox[0] === 200 && count($inbox[1]['data']['chats']) === 1);
+$inboxMessages = $inbox[1]['data']['chats'][0]['messages'] ?? array();
+check('the inbox includes the visitor message', count($inboxMessages) >= 1 && $inboxMessages[count($inboxMessages) - 1]['text'] === 'Are you there?');
 
 $chatId = (string) $inbox[1]['data']['chats'][0]['id'];
+$opened = gf_chat_dispatch($db, 'GET', 'thread', $chatId, array(), '', $staff);
+$openedMessages = $opened[1]['data']['messages'] ?? array();
+check('opening a chat shows its messages', $opened[0] === 200 && count($openedMessages) >= 1 && $openedMessages[count($openedMessages) - 1]['text'] === 'Are you there?');
+$_GET['chat'] = $chatId;
+check('the chat number is read from chat', gf_chat_request_chat_id('', array()) === $chatId);
+unset($_GET['chat']);
+$_SERVER['HTTP_X_GF_CHAT'] = $chatId;
+check('the chat number is read from the header', gf_chat_request_chat_id('', array()) === $chatId);
+unset($_SERVER['HTTP_X_GF_CHAT']);
+check('the chat number is read from the reply', gf_chat_request_chat_id('', array('chatId' => $chatId)) === $chatId);
 $reply = gf_chat_dispatch($db, 'POST', 'reply', $chatId, array('text' => 'Yes, how can we help?'), '', $staff);
 $replied = $reply[1]['data']['messages'] ?? array();
 $staffMessage = $replied[count($replied) - 1];
