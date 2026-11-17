@@ -48,7 +48,7 @@
 
   function refreshInbox() {
     if (!token()) return Promise.resolve();
-    return api('/admin/api/chat/inbox', { headers: authHeaders() }).then(function (body) {
+    return api('/gf-chat.php?op=inbox', { headers: authHeaders() }).then(function (body) {
       var data = body.data || {};
       state.chats = data.chats || [];
       state.unread = state.chats.reduce(function (sum, chat) { return sum + (chat.staffUnread || 0); }, 0);
@@ -58,7 +58,7 @@
 
   function openThread(id) {
     state.active = id;
-    return api('/admin/api/chat/inbox/' + id, { headers: authHeaders() }).then(function (body) {
+    return api('/gf-chat.php?op=thread&id=' + id, { headers: authHeaders() }).then(function (body) {
       state.thread = body.data;
       if (panel) {
         fillList();
@@ -74,7 +74,7 @@
     state.sending = true;
     var sendButton = document.getElementById('gf-chat-send');
     if (sendButton) sendButton.textContent = 'Sending…';
-    api('/admin/api/chat/inbox/' + state.active + '/reply', {
+    api('/gf-chat.php?op=reply&id=' + state.active, {
       method: 'POST',
       headers: authHeaders(true),
       body: JSON.stringify({ text: text }),
@@ -102,7 +102,7 @@
 
   function loadContacts() {
     if (!token()) return Promise.resolve();
-    return api('/admin/api/chat/contacts', { headers: authHeaders() }).then(function (body) {
+    return api('/gf-chat.php?op=contacts', { headers: authHeaders() }).then(function (body) {
       state.contacts = body.data || [];
       if (contactsPage) fillContacts();
     }).catch(function () {});
@@ -606,7 +606,7 @@
 
   function beat() {
     if (!token()) return;
-    fetch('/admin/api/chat/presence', { method: 'POST', headers: authHeaders(true), body: '{}' }).catch(function () {});
+    fetch('/gf-chat.php?op=presence', { method: 'POST', headers: authHeaders(true), body: '{}' }).catch(function () {});
   }
 
   setInterval(mount, 800);

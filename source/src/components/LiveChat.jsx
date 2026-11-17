@@ -45,7 +45,7 @@ export default function LiveChat() {
     const token = currentToken();
     if (!token) return;
     try {
-      const response = await fetch("/admin/api/chat", {
+      const response = await fetch("/gf-chat.php", {
         headers: { "X-Chat-Token": token },
       });
       if (!stillThisChat(session, token)) return;
@@ -120,7 +120,7 @@ export default function LiveChat() {
     setSending(true);
     setError("");
     try {
-      const response = await fetch("/admin/api/chat/start", {
+      const response = await fetch("/gf-chat.php?op=start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -157,7 +157,7 @@ export default function LiveChat() {
     setSending(true);
     setError("");
     try {
-      const response = await fetch("/admin/api/chat/messages", {
+      const response = await fetch("/gf-chat.php?op=messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
