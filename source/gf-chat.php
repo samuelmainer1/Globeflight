@@ -72,23 +72,27 @@ function gf_chat_staff_online(&$db) {
 function gf_chat_messages_for($db, $chatId) {
     $rows = array();
     foreach ($db['messages'] as $item) {
-        if ((int) $item['chatId'] === (int) $chatId) $rows[] = $item;
+        if (!is_array($item)) continue;
+        if ((int) (isset($item['chatId']) ? $item['chatId'] : 0) === (int) $chatId) $rows[] = $item;
     }
     usort($rows, function ($a, $b) {
-        $time = strcmp((string) $a['createdAt'], (string) $b['createdAt']);
+        $time = strcmp((string) (isset($a['createdAt']) ? $a['createdAt'] : ''), (string) (isset($b['createdAt']) ? $b['createdAt'] : ''));
         if ($time !== 0) return $time;
-        return (int) $a['id'] - (int) $b['id'];
+        return (int) (isset($a['id']) ? $a['id'] : 0) - (int) (isset($b['id']) ? $b['id'] : 0);
     });
     return $rows;
 }
 
 function gf_chat_public_message($message) {
+    if (!is_array($message)) {
+        return array('id' => 0, 'from' => '', 'text' => '', 'authorName' => '', 'createdAt' => '');
+    }
     return array(
-        'id' => (int) $message['id'],
-        'from' => $message['from'],
-        'text' => $message['text'],
-        'authorName' => isset($message['authorName']) ? $message['authorName'] : '',
-        'createdAt' => $message['createdAt'],
+        'id' => isset($message['id']) ? (int) $message['id'] : 0,
+        'from' => isset($message['from']) ? (string) $message['from'] : '',
+        'text' => isset($message['text']) ? (string) $message['text'] : '',
+        'authorName' => isset($message['authorName']) ? (string) $message['authorName'] : '',
+        'createdAt' => isset($message['createdAt']) ? (string) $message['createdAt'] : '',
     );
 }
 
@@ -230,10 +234,14 @@ function gf_chat_alert($chat, $message) {
         $lines[] = $wrote;
     }
     $body = implode("\n", $lines);
-    $headers = "From: Globeflight Kenya <cs@globeflight.co.ke>\r\nContent-Type: text/plain; charset=UTF-8";
-    foreach (array('sam.maina@globeflight.co.ke', 'cs@globeflight.co.ke') as $address) {
+    $headers = "From: Globeflight Kenya <cs@globeflight.co.ke>\r\nReply-To: globeflightke21@gmail.com\r\nContent-Type: text/plain; charset=UTF-8";
+    foreach (gf_chat_alert_addresses() as $address) {
         @mail($address, 'Someone is waiting in the live chat', $body, $headers);
     }
+}
+
+function gf_chat_alert_addresses() {
+    return array('sam.maina@globeflight.co.ke', 'globeflightke21@gmail.com');
 }
 
 function gf_chat_fail($status, $message) {
@@ -498,6 +506,8 @@ function gf_chat_authorization() {
         $env = getenv($key);
         if (is_string($env) && $env !== '') $found[] = $env;
     }
+    if (isset($_GET['gf_admin'])) $found[] = $_GET['gf_admin'];
+    if (isset($_COOKIE['gf_admin'])) $found[] = $_COOKIE['gf_admin'];
     foreach ($found as $value) {
         $value = trim((string) $value);
         if ($value === '') continue;
@@ -615,8 +625,17 @@ if (PHP_SAPI !== 'cli' && isset($_SERVER['SCRIPT_FILENAME']) && realpath((string
     if (!$handle) gf_chat_respond(500, array('success' => false, 'message' => 'The chat could not be saved.'));
     flock($handle, LOCK_EX);
     $stored = stream_get_contents($handle);
-    $db = json_decode($stored ? $stored : '', true);
-    if (!is_array($db)) $db = gf_chat_blank();
+    if ($stored === false) $stored = '';
+    $db = json_decode($stored, true);
+    $decoded = is_array($db);
+    if (!$decoded) {
+        if (trim($stored) !== '') {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+            gf_chat_respond(500, array('success' => false, 'message' => 'The saved chats could not be read.'));
+        }
+        $db = gf_chat_blank();
+    }
     $result = gf_chat_dispatch($db, $method, $op, $id, $body, $token, $staff);
     $storedJson = gf_chat_json($db);
     if ($storedJson === '') {
@@ -624,10 +643,12 @@ if (PHP_SAPI !== 'cli' && isset($_SERVER['SCRIPT_FILENAME']) && realpath((string
         fclose($handle);
         gf_chat_respond(500, array('success' => false, 'message' => 'The chat could not be saved.'));
     }
-    rewind($handle);
-    ftruncate($handle, 0);
-    fwrite($handle, $storedJson);
-    fflush($handle);
+    if ($storedJson !== $stored) {
+        rewind($handle);
+        ftruncate($handle, 0);
+        fwrite($handle, $storedJson);
+        fflush($handle);
+    }
     flock($handle, LOCK_UN);
     fclose($handle);
     gf_chat_respond($result[0], $result[1]);

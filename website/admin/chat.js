@@ -1,11 +1,25 @@
 (function () {
-  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false, error: '' };
+  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false, error: '', inboxError: '' };
   var panel = null;
   var contactsPage = null;
   var pollTimer = null;
 
   function token() {
     return localStorage.getItem('token') || '';
+  }
+
+  function publishToken() {
+    var value = token();
+    if (!value) return;
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = 'gf_admin=' + encodeURIComponent(value) + '; Path=/gf-chat.php; SameSite=Lax; Max-Age=43200' + secure;
+  }
+
+  function staffPath(path) {
+    publishToken();
+    var value = token();
+    if (!value) return path;
+    return path + (path.indexOf('?') === -1 ? '?' : '&') + 'gf_admin=' + encodeURIComponent(value);
   }
 
   function authHeaders(json) {
@@ -70,12 +84,18 @@
 
   function refreshInbox() {
     if (!token()) return Promise.resolve();
-    return api('/gf-chat.php?op=inbox', { headers: authHeaders() }).then(function (body) {
+    return api(staffPath('/gf-chat.php?op=inbox'), { headers: authHeaders(), credentials: 'same-origin' }).then(function (body) {
       var data = body.data || {};
       state.chats = data.chats || [];
+      state.inboxError = '';
       state.unread = state.chats.reduce(function (sum, chat) { return sum + (chat.staffUnread || 0); }, 0);
       if (panel) fillList();
-    }).catch(function () {});
+      if (contactsPage) fillContacts();
+    }).catch(function (error) {
+      state.inboxError = error.message || 'The chat list could not be loaded.';
+      if (panel) fillList();
+      if (contactsPage) fillContacts();
+    });
   }
 
   function showKnownThread(id) {
@@ -99,7 +119,7 @@
       fillList();
       fillStream();
     }
-    return api('/gf-chat.php?op=thread&chat=' + encodeURIComponent(id) + '&id=' + encodeURIComponent(id), { headers: chatHeaders(id) }).then(function (body) {
+    return api(staffPath('/gf-chat.php?op=thread&chat=' + encodeURIComponent(id) + '&id=' + encodeURIComponent(id)), { headers: chatHeaders(id), credentials: 'same-origin' }).then(function (body) {
       if (String(state.active) !== String(id)) return;
       if (body.data && Array.isArray(body.data.messages)) state.thread = body.data;
       state.error = '';
@@ -124,7 +144,7 @@
     state.error = '';
     var sendButton = document.getElementById('gf-chat-send');
     if (sendButton) sendButton.textContent = 'Sending…';
-    api('/gf-chat.php?op=reply&chat=' + encodeURIComponent(chatId) + '&id=' + encodeURIComponent(chatId), {
+    api(staffPath('/gf-chat.php?op=reply&chat=' + encodeURIComponent(chatId) + '&id=' + encodeURIComponent(chatId)), {
       method: 'POST',
       headers: chatHeaders(chatId, true),
       body: JSON.stringify({ text: text, chatId: chatId }),
@@ -155,7 +175,7 @@
 
   function loadContacts() {
     if (!token()) return Promise.resolve();
-    return api('/gf-chat.php?op=contacts', { headers: authHeaders() }).then(function (body) {
+    return api(staffPath('/gf-chat.php?op=contacts'), { headers: authHeaders(), credentials: 'same-origin' }).then(function (body) {
       state.contacts = body.data || [];
       if (contactsPage) fillContacts();
     }).catch(function () {});
@@ -290,20 +310,38 @@
     if (contactsPage.dataset.mode !== mode) fillContacts();
   }
 
+  function contactRows() {
+    var rows = state.contacts.slice();
+    var seen = {};
+    rows.forEach(function (contact) { seen[String(contact.chatId)] = true; });
+    state.chats.forEach(function (chat) {
+      if (seen[String(chat.id)]) return;
+      rows.push({
+        chatId: chat.id,
+        name: chat.visitorName,
+        email: chat.visitorEmail,
+        phone: chat.visitorPhone,
+        createdAt: chat.updatedAt,
+      });
+    });
+    return rows;
+  }
+
   function fillContacts() {
     var body = document.getElementById('gf-chat-contacts-body');
     if (!body) return;
     if (contactsPage) contactsPage.dataset.mode = window.innerWidth < 800 ? 'cards' : 'table';
     body.textContent = '';
-    if (!state.contacts.length) {
+    var people = contactRows();
+    if (!people.length) {
       var empty = document.createElement('div');
-      empty.textContent = 'No saved contacts yet. A visitor’s email and phone number appear here when they start a chat.';
-      empty.style.cssText = 'padding:28px 8px;color:#4a5568;font-size:15px;line-height:1.5';
+      empty.textContent = state.inboxError || 'No saved contacts yet. A visitor’s email and phone number appear here when they start a chat.';
+      empty.style.cssText = 'padding:28px 8px;color:' + (state.inboxError ? '#9b2c2c' : '#4a5568') + ';font-size:15px;line-height:1.5';
       body.appendChild(empty);
       return;
     }
     if (window.innerWidth < 800) {
-      state.contacts.forEach(function (contact) {
+      people.forEach(function (contact) {
         var card = document.createElement('article');
         card.style.cssText = 'background:#fff;border:1px solid #e6eed4;border-radius:12px;padding:14px;margin:0 0 12px';
         var top = document.createElement('div');
@@ -343,7 +381,7 @@
     });
     head.appendChild(headRow);
     var rows = document.createElement('tbody');
-    state.contacts.forEach(function (contact) {
+    people.forEach(function (contact) {
       var row = document.createElement('tr');
       function cell(value, strong) {
         var item = document.createElement('td');
@@ -405,6 +443,7 @@
     document.body.appendChild(contactsPage);
     paintContactsLink();
     fillContacts();
+    refreshInbox();
     loadContacts();
   }
 
@@ -445,8 +484,8 @@
     list.textContent = '';
     if (!state.chats.length) {
       var empty = document.createElement('div');
-      empty.textContent = 'No chats yet. A visitor message will show here.';
-      empty.style.cssText = 'padding:16px;color:#4a5568;font-size:13px;line-height:1.45';
+      empty.textContent = state.inboxError || 'No chats yet. A visitor message will show here.';
+      empty.style.cssText = 'padding:16px;color:' + (state.inboxError ? '#9b2c2c' : '#4a5568') + ';font-size:13px;line-height:1.45';
       list.appendChild(empty);
       return;
     }
@@ -672,7 +711,7 @@
 
   function beat() {
     if (!token()) return;
-    fetch('/gf-chat.php?op=presence', { method: 'POST', headers: authHeaders(true), body: '{}' }).catch(function () {});
+    fetch(staffPath('/gf-chat.php?op=presence'), { method: 'POST', headers: authHeaders(true), credentials: 'same-origin', body: '{}' }).catch(function () {});
   }
 
   setInterval(mount, 800);

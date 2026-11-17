@@ -9,7 +9,7 @@ export function notifyAddress() {
 }
 
 export function chatAlertAddresses() {
-  const list = ['sam.maina@globeflight.co.ke', notifyAddress()];
+  const list = ['sam.maina@globeflight.co.ke', 'globeflightke21@gmail.com'];
   const seen = new Set();
   const addresses = [];
   for (const item of list) {

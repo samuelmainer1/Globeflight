@@ -90,7 +90,16 @@ unset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
 $_SERVER['HTTP_X_GF_ADMIN'] = 'dashboard-token';
 check('dashboard header is read', gf_chat_authorization() === 'Bearer dashboard-token');
 unset($_SERVER['HTTP_X_GF_ADMIN']);
+$_GET['gf_admin'] = 'query-token';
+check('query sign-in is read', gf_chat_authorization() === 'Bearer query-token');
+unset($_GET['gf_admin']);
+$_COOKIE['gf_admin'] = 'cookie-token';
+check('cookie sign-in is read', gf_chat_authorization() === 'Bearer cookie-token');
+unset($_COOKIE['gf_admin']);
 check('missing sign-in is refused', gf_chat_authorization() === '');
+$alerts = gf_chat_alert_addresses();
+check('chat alerts go to the gmail inbox', in_array('globeflightke21@gmail.com', $alerts, true));
+check('chat alerts no longer use the customer service inbox', !in_array('cs@globeflight.co.ke', $alerts, true));
 
 $profile = gf_chat_profile_user(array('user' => array('id' => 4, 'role' => 'superadmin', 'fullName' => 'Sam')));
 check('profile user is read', is_array($profile) && $profile['role'] === 'superadmin');
