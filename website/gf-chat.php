@@ -354,7 +354,11 @@ function gf_chat_dispatch(&$db, $method, $op, $id, $body, $token, $staff) {
         return array(200, array('success' => true, 'data' => gf_chat_thread($db, $chat, null)));
     }
 
-    if (!$staff) return gf_chat_fail(401, 'Sign in to answer the live chat.');
+    if (!$staff) {
+        $message = 'Sign in to answer the live chat.';
+        if (!empty($GLOBALS['gf_chat_staff_message'])) $message = (string) $GLOBALS['gf_chat_staff_message'];
+        return gf_chat_fail(401, $message);
+    }
 
     if ($method === 'POST' && $op === 'presence') {
         $db['presence'][(string) $staff['id']] = (int) round(microtime(true) * 1000);
@@ -489,8 +493,17 @@ function gf_chat_store_file() {
     return '';
 }
 
-function gf_chat_authorization() {
-    $found = array();
+function gf_chat_bearer($value) {
+    $value = trim((string) $value);
+    if ($value === '') return '';
+    if (stripos($value, 'Bearer ') !== 0) $value = 'Bearer ' . $value;
+    if (!preg_match('/^Bearer\s+\S+$/i', $value)) return '';
+    return $value;
+}
+
+function gf_chat_authorization_candidates() {
+    $preferred = array();
+    $fallback = array();
     $headerBags = array();
     if (function_exists('getallheaders')) $headerBags[] = getallheaders();
     if (function_exists('apache_request_headers')) $headerBags[] = apache_request_headers();
@@ -498,23 +511,33 @@ function gf_chat_authorization() {
         if (!is_array($headers)) continue;
         foreach ($headers as $name => $value) {
             $lower = strtolower((string) $name);
-            if ($lower === 'authorization' || $lower === 'x-gf-admin') $found[] = $value;
+            if ($lower === 'x-gf-admin') $preferred[] = $value;
+            if ($lower === 'authorization') $fallback[] = $value;
         }
     }
-    foreach (array('HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'Authorization', 'HTTP_X_GF_ADMIN') as $key) {
-        if (!empty($_SERVER[$key])) $found[] = $_SERVER[$key];
+    foreach (array('HTTP_X_GF_ADMIN', 'REDIRECT_HTTP_X_GF_ADMIN') as $key) {
+        if (!empty($_SERVER[$key])) $preferred[] = $_SERVER[$key];
         $env = getenv($key);
-        if (is_string($env) && $env !== '') $found[] = $env;
+        if (is_string($env) && $env !== '') $preferred[] = $env;
     }
-    if (isset($_GET['gf_admin'])) $found[] = $_GET['gf_admin'];
-    if (isset($_COOKIE['gf_admin'])) $found[] = $_COOKIE['gf_admin'];
-    foreach ($found as $value) {
-        $value = trim((string) $value);
-        if ($value === '') continue;
-        if (stripos($value, 'Bearer ') !== 0) $value = 'Bearer ' . $value;
-        if (preg_match('/^Bearer\s+\S+$/i', $value)) return $value;
+    if (isset($_COOKIE['gf_admin'])) $preferred[] = $_COOKIE['gf_admin'];
+    if (isset($_GET['gf_admin'])) $preferred[] = $_GET['gf_admin'];
+    foreach (array('HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'Authorization') as $key) {
+        if (!empty($_SERVER[$key])) $fallback[] = $_SERVER[$key];
+        $env = getenv($key);
+        if (is_string($env) && $env !== '') $fallback[] = $env;
     }
-    return '';
+    $ready = array();
+    foreach (array_merge($preferred, $fallback) as $value) {
+        $bearer = gf_chat_bearer($value);
+        if ($bearer !== '' && !in_array($bearer, $ready, true)) $ready[] = $bearer;
+    }
+    return $ready;
+}
+
+function gf_chat_authorization() {
+    $ready = gf_chat_authorization_candidates();
+    return count($ready) ? $ready[0] : '';
 }
 
 function gf_chat_profile_user($json) {
@@ -527,6 +550,11 @@ function gf_chat_profile_user($json) {
 }
 
 function gf_chat_fetch_profile($url, $auth) {
+    $result = gf_chat_fetch_profile_result($url, $auth);
+    return $result['user'];
+}
+
+function gf_chat_fetch_profile_result($url, $auth) {
     $ch = curl_init($url);
     curl_setopt_array($ch, array(
         CURLOPT_HTTPHEADER => array(
@@ -541,20 +569,101 @@ function gf_chat_fetch_profile($url, $auth) {
     $raw = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     curl_close($ch);
-    if ($raw === false || $code !== 200) return null;
-    return gf_chat_profile_user(json_decode($raw, true));
+    if ($raw === false) return array('status' => 0, 'user' => null);
+    $user = $code === 200 ? gf_chat_profile_user(json_decode($raw, true)) : null;
+    return array('status' => $code, 'user' => $user);
 }
 
-function gf_chat_staff_from_request() {
-    $auth = gf_chat_authorization();
-    if ($auth === '' || !function_exists('curl_init')) return null;
-    $user = gf_chat_fetch_profile('http://127.0.0.1:5000/admin/api/auth/profile', $auth);
-    if (!$user) $user = gf_chat_fetch_profile('https://globeflight.co.ke/admin/api/auth/profile', $auth);
-    if (!$user) return null;
+function gf_chat_staff_cache_path() {
+    $store = gf_chat_store_file();
+    if ($store === '') return '';
+    return dirname($store) . '/staff-cache.json';
+}
+
+function gf_chat_staff_cache_read() {
+    $path = gf_chat_staff_cache_path();
+    if ($path === '' || !is_file($path)) return array();
+    $json = json_decode((string) file_get_contents($path), true);
+    return is_array($json) ? $json : array();
+}
+
+function gf_chat_staff_cache_write($cache) {
+    $path = gf_chat_staff_cache_path();
+    if ($path === '') return;
+    file_put_contents($path, json_encode($cache));
+}
+
+function gf_chat_cached_staff($auth, $maxAge) {
+    $cache = gf_chat_staff_cache_read();
+    $key = hash('sha256', $auth);
+    if (!isset($cache[$key]) || !is_array($cache[$key])) return null;
+    $row = $cache[$key];
+    $seen = isset($row['seen']) ? (int) $row['seen'] : 0;
+    if (time() - $seen > $maxAge) return null;
+    if (isset($row['user']) && is_array($row['user'])) return $row['user'];
+    return null;
+}
+
+function gf_chat_remember_staff($auth, $user) {
+    $cache = gf_chat_staff_cache_read();
+    $now = time();
+    $keep = array();
+    foreach ($cache as $key => $row) {
+        if (!is_array($row)) continue;
+        $seen = isset($row['seen']) ? (int) $row['seen'] : 0;
+        if ($now - $seen > 7 * 86400) continue;
+        $keep[$key] = $row;
+    }
+    $keep[hash('sha256', $auth)] = array('seen' => $now, 'user' => $user);
+    gf_chat_staff_cache_write($keep);
+}
+
+function gf_chat_accept_staff($user) {
+    if (!is_array($user)) return null;
     $role = strtolower(trim((string) (isset($user['role']) ? $user['role'] : '')));
     if ($role !== 'admin' && $role !== 'superadmin') return null;
     if (!isset($user['id']) || $user['id'] === '') $user['id'] = $role;
     return $user;
+}
+
+function gf_chat_staff_from_request() {
+    $GLOBALS['gf_chat_staff_message'] = '';
+    $candidates = gf_chat_authorization_candidates();
+    if (!count($candidates) || !function_exists('curl_init')) return null;
+    foreach ($candidates as $auth) {
+        $cached = gf_chat_cached_staff($auth, 12 * 3600);
+        if ($cached) return $cached;
+    }
+    $rateLimited = false;
+    foreach ($candidates as $auth) {
+        $user = null;
+        $limited = false;
+        foreach (array('http://127.0.0.1:5000/admin/api/auth/profile', 'https://globeflight.co.ke/admin/api/auth/profile') as $url) {
+            $result = gf_chat_fetch_profile_result($url, $auth);
+            if ($result['status'] === 429) {
+                $limited = true;
+                continue;
+            }
+            if ($result['user']) {
+                $user = $result['user'];
+                break;
+            }
+        }
+        if ($limited) $rateLimited = true;
+        $user = gf_chat_accept_staff($user);
+        if ($user) {
+            gf_chat_remember_staff($auth, $user);
+            return $user;
+        }
+        if ($limited) {
+            $stale = gf_chat_cached_staff($auth, 7 * 86400);
+            if ($stale) return $stale;
+        }
+    }
+    if ($rateLimited) {
+        $GLOBALS['gf_chat_staff_message'] = 'You are signed in, but the dashboard is limiting checks. Wait a few minutes, then open Live chat again.';
+    }
+    return null;
 }
 
 function gf_chat_json($payload) {

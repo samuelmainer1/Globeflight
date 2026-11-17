@@ -89,7 +89,14 @@ check('rewritten sign-in is read', gf_chat_authorization() === 'Bearer redirecte
 unset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
 $_SERVER['HTTP_X_GF_ADMIN'] = 'dashboard-token';
 check('dashboard header is read', gf_chat_authorization() === 'Bearer dashboard-token');
-unset($_SERVER['HTTP_X_GF_ADMIN']);
+$_SERVER['HTTP_AUTHORIZATION'] = 'Bearer stale-token';
+check('chat sign-in is preferred over a stripped header', gf_chat_authorization() === 'Bearer dashboard-token');
+unset($_SERVER['HTTP_AUTHORIZATION'], $_SERVER['HTTP_X_GF_ADMIN']);
+gf_chat_remember_staff('Bearer dashboard-token', array('id' => 4, 'role' => 'admin', 'fullName' => 'Sam'));
+$remembered = gf_chat_cached_staff('Bearer dashboard-token', 3600);
+check('a successful sign-in is remembered', is_array($remembered) && $remembered['fullName'] === 'Sam');
+$cachePath = gf_chat_staff_cache_path();
+if ($cachePath && is_file($cachePath)) unlink($cachePath);
 $_GET['gf_admin'] = 'query-token';
 check('query sign-in is read', gf_chat_authorization() === 'Bearer query-token');
 unset($_GET['gf_admin']);
