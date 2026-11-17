@@ -69,4 +69,15 @@ check('the inbox stays closed without a sign-in', $locked[0] === 401);
 $contacts = gf_chat_dispatch($db, 'GET', 'contacts', '', array(), '', $staff);
 check('the contact is listed', $contacts[0] === 200 && $contacts[1]['data'][0]['email'] === 'asha@example.com');
 
+$_SERVER['HTTP_AUTHORIZATION'] = 'Bearer dashboard-token';
+check('dashboard sign-in is read', gf_chat_authorization() === 'Bearer dashboard-token');
+unset($_SERVER['HTTP_AUTHORIZATION']);
+$_SERVER['REDIRECT_HTTP_AUTHORIZATION'] = 'Bearer redirected-token';
+check('rewritten sign-in is read', gf_chat_authorization() === 'Bearer redirected-token');
+unset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+check('missing sign-in is refused', gf_chat_authorization() === '');
+
+$profile = gf_chat_profile_user(array('user' => array('id' => 4, 'role' => 'superadmin', 'fullName' => 'Sam')));
+check('profile user is read', is_array($profile) && $profile['role'] === 'superadmin');
+
 exit($failures === 0 ? 0 : 1);

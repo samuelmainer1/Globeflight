@@ -477,32 +477,66 @@ function gf_chat_store_file() {
     return '';
 }
 
-function gf_chat_staff_from_request() {
-    $auth = '';
-    if (!empty($_SERVER['HTTP_AUTHORIZATION'])) $auth = (string) $_SERVER['HTTP_AUTHORIZATION'];
-    elseif (!empty($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) $auth = (string) $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
-    if (!preg_match('/^Bearer\s+\S+$/', $auth) || !function_exists('curl_init')) return null;
-    $ch = curl_init('http://127.0.0.1:5000/admin/api/auth/profile');
+function gf_chat_authorization() {
+    $found = array();
+    $headerBags = array();
+    if (function_exists('getallheaders')) $headerBags[] = getallheaders();
+    if (function_exists('apache_request_headers')) $headerBags[] = apache_request_headers();
+    foreach ($headerBags as $headers) {
+        if (!is_array($headers)) continue;
+        foreach ($headers as $name => $value) {
+            if (strtolower((string) $name) === 'authorization') $found[] = $value;
+        }
+    }
+    foreach (array('HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'Authorization') as $key) {
+        if (!empty($_SERVER[$key])) $found[] = $_SERVER[$key];
+        $env = getenv($key);
+        if (is_string($env) && $env !== '') $found[] = $env;
+    }
+    foreach ($found as $value) {
+        $value = trim((string) $value);
+        if (preg_match('/^Bearer\s+\S+$/i', $value)) return $value;
+    }
+    return '';
+}
+
+function gf_chat_profile_user($json) {
+    if (!is_array($json)) return null;
+    if (isset($json['user']) && is_array($json['user'])) return $json['user'];
+    if (isset($json['data']['user']) && is_array($json['data']['user'])) return $json['data']['user'];
+    if (isset($json['data']['role'])) return $json['data'];
+    if (isset($json['role'])) return $json;
+    return null;
+}
+
+function gf_chat_fetch_profile($url, $auth) {
+    $ch = curl_init($url);
     curl_setopt_array($ch, array(
-        CURLOPT_HTTPHEADER => array('Authorization: ' . $auth, 'Accept: application/json'),
+        CURLOPT_HTTPHEADER => array(
+            'Authorization: ' . $auth,
+            'Accept: application/json',
+            'Origin: https://globeflight.co.ke',
+        ),
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 4,
+        CURLOPT_TIMEOUT => 6,
         CURLOPT_CONNECTTIMEOUT => 2,
     ));
     $raw = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     curl_close($ch);
     if ($raw === false || $code !== 200) return null;
-    $json = json_decode($raw, true);
-    $user = null;
-    if (isset($json['user']) && is_array($json['user'])) $user = $json['user'];
-    elseif (isset($json['data']['user']) && is_array($json['data']['user'])) $user = $json['data']['user'];
-    elseif (isset($json['data']['role'])) $user = $json['data'];
-    elseif (isset($json['role'])) $user = $json;
+    return gf_chat_profile_user(json_decode($raw, true));
+}
+
+function gf_chat_staff_from_request() {
+    $auth = gf_chat_authorization();
+    if ($auth === '' || !function_exists('curl_init')) return null;
+    $user = gf_chat_fetch_profile('http://127.0.0.1:5000/admin/api/auth/profile', $auth);
+    if (!$user) $user = gf_chat_fetch_profile('https://globeflight.co.ke/admin/api/auth/profile', $auth);
     if (!$user) return null;
-    $role = isset($user['role']) ? (string) $user['role'] : '';
+    $role = strtolower(trim((string) (isset($user['role']) ? $user['role'] : '')));
     if ($role !== 'admin' && $role !== 'superadmin') return null;
-    if (!isset($user['id'])) $user['id'] = $role;
+    if (!isset($user['id']) || $user['id'] === '') $user['id'] = $role;
     return $user;
 }
 
