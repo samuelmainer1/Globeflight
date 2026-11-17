@@ -460,6 +460,7 @@ function BlogForm({ initial, categories, onCancel, onSaved }) {
           <div className="blog-preview rounded-lg border border-gray-300 bg-white px-4 py-3" dangerouslySetInnerHTML={{ __html: form.content || '<p>Nothing to preview yet.</p>' }} />
         ) : (
           <BlogEditor key={initial?.id || 'new'} value={form.content} onChange={set('content')} />
+          <p className="mt-2 text-sm text-gray-500">To show an ad in this post only, put [[ad]] on its own line where the ad should appear.</p>
         )}
       </div>
       <TextInput label="Featured image URL" value={form.featuredImage} onChange={set('featuredImage')} />

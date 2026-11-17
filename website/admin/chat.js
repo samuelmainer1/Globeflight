@@ -1,5 +1,5 @@
 (function () {
-  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false };
+  var state = { chats: [], contacts: [], active: null, thread: null, draft: '', unread: 0, sending: false, error: '', inboxError: '' };
   var panel = null;
   var contactsPage = null;
   var pollTimer = null;
@@ -8,8 +8,26 @@
     return localStorage.getItem('token') || '';
   }
 
+  function publishToken() {
+    var value = token();
+    if (!value) return;
+    var secure = location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = 'gf_admin=' + encodeURIComponent(value) + '; Path=/gf-chat.php; SameSite=Lax; Max-Age=43200' + secure;
+  }
+
+  function staffPath(path) {
+    publishToken();
+    var value = token();
+    if (!value) return path;
+    return path + (path.indexOf('?') === -1 ? '?' : '&') + 'gf_admin=' + encodeURIComponent(value);
+  }
+
   function authHeaders(json) {
-    var headers = { Authorization: token() ? 'Bearer ' + token() : '' };
+    var headers = {};
+    if (token()) {
+      headers.Authorization = 'Bearer ' + token();
+      headers['X-Gf-Admin'] = token();
+    }
     if (json) headers['Content-Type'] = 'application/json';
     return headers;
   }
@@ -39,59 +57,114 @@
 
   function api(path, options) {
     return fetch(path, options).then(function (response) {
-      return response.json().catch(function () { return {}; }).then(function (body) {
-        if (!response.ok) throw new Error(body.message || 'Request failed');
+      return response.text().then(function (raw) {
+        var body = {};
+        if (raw) {
+          try { body = JSON.parse(raw); }
+          catch (e) { throw new Error('The chat server sent an unreadable response.'); }
+        }
+        if (!response.ok || body.success === false) throw new Error(body.message || 'Request failed');
         return body;
       });
     });
   }
 
+  function chatById(id) {
+    for (var i = 0; i < state.chats.length; i++) {
+      if (String(state.chats[i].id) === String(id)) return state.chats[i];
+    }
+    return null;
+  }
+
+  function chatHeaders(id, json) {
+    var headers = authHeaders(json);
+    if (id) headers['X-Gf-Chat'] = String(id);
+    return headers;
+  }
+
   function refreshInbox() {
     if (!token()) return Promise.resolve();
-    return api('/admin/api/chat/inbox', { headers: authHeaders() }).then(function (body) {
+    return api(staffPath('/gf-chat.php?op=inbox'), { headers: authHeaders(), credentials: 'same-origin' }).then(function (body) {
       var data = body.data || {};
       state.chats = data.chats || [];
+      state.inboxError = '';
       state.unread = state.chats.reduce(function (sum, chat) { return sum + (chat.staffUnread || 0); }, 0);
       if (panel) fillList();
-    }).catch(function () {});
+      if (contactsPage) fillContacts();
+    }).catch(function (error) {
+      state.inboxError = error.message || 'The chat list could not be loaded.';
+      if (panel) fillList();
+      if (contactsPage) fillContacts();
+    });
+  }
+
+  function showKnownThread(id) {
+    var known = chatById(id);
+    if (!known) return;
+    var previous = state.thread && String(state.thread.id) === String(id) && Array.isArray(state.thread.messages) ? state.thread.messages : [];
+    state.thread = {
+      id: known.id,
+      visitorName: known.visitorName || '',
+      visitorEmail: known.visitorEmail || '',
+      visitorPhone: known.visitorPhone || '',
+      messages: Array.isArray(known.messages) ? known.messages : previous,
+    };
   }
 
   function openThread(id) {
     state.active = id;
-    return api('/admin/api/chat/inbox/' + id, { headers: authHeaders() }).then(function (body) {
-      state.thread = body.data;
+    state.error = '';
+    showKnownThread(id);
+    if (panel) {
+      fillList();
+      fillStream();
+    }
+    return api(staffPath('/gf-chat.php?op=thread&chat=' + encodeURIComponent(id) + '&id=' + encodeURIComponent(id)), { headers: chatHeaders(id), credentials: 'same-origin' }).then(function (body) {
+      if (String(state.active) !== String(id)) return;
+      if (body.data && Array.isArray(body.data.messages)) state.thread = body.data;
+      state.error = '';
       if (panel) {
         fillList();
         fillStream();
       }
       if (window.gfRefreshNotes) window.gfRefreshNotes();
-    }).catch(function () {});
+    }).catch(function (error) {
+      if (String(state.active) !== String(id)) return;
+      var visible = state.thread && String(state.thread.id) === String(id) && state.thread.messages && state.thread.messages.length;
+      if (!visible) state.error = error.message || 'This chat could not be opened.';
+      if (panel) fillStream();
+    });
   }
 
   function sendReply() {
     var text = state.draft.trim();
     if (!text || !state.active || state.sending) return;
+    var chatId = state.active;
     state.sending = true;
+    state.error = '';
     var sendButton = document.getElementById('gf-chat-send');
     if (sendButton) sendButton.textContent = 'Sending…';
-    api('/admin/api/chat/inbox/' + state.active + '/reply', {
+    api(staffPath('/gf-chat.php?op=reply&chat=' + encodeURIComponent(chatId) + '&id=' + encodeURIComponent(chatId)), {
       method: 'POST',
-      headers: authHeaders(true),
-      body: JSON.stringify({ text: text }),
+      headers: chatHeaders(chatId, true),
+      body: JSON.stringify({ text: text, chatId: chatId }),
     }).then(function (body) {
-      state.thread = body.data;
+      if (body.data && Array.isArray(body.data.messages)) state.thread = body.data;
       state.draft = '';
       state.sending = false;
+      state.error = '';
       var input = document.getElementById('gf-chat-draft');
       if (input) input.value = '';
       var sendButton = document.getElementById('gf-chat-send');
       if (sendButton) sendButton.textContent = 'Send';
       fillStream();
       return refreshInbox();
-    }).catch(function () {
+    }).catch(function (error) {
       state.sending = false;
+      state.error = error.message || 'The reply was not sent.';
       var sendButton = document.getElementById('gf-chat-send');
       if (sendButton) sendButton.textContent = 'Send';
+      fillStream();
     });
   }
 
@@ -102,7 +175,7 @@
 
   function loadContacts() {
     if (!token()) return Promise.resolve();
-    return api('/admin/api/chat/contacts', { headers: authHeaders() }).then(function (body) {
+    return api(staffPath('/gf-chat.php?op=contacts'), { headers: authHeaders(), credentials: 'same-origin' }).then(function (body) {
       state.contacts = body.data || [];
       if (contactsPage) fillContacts();
     }).catch(function () {});
@@ -237,20 +310,38 @@
     if (contactsPage.dataset.mode !== mode) fillContacts();
   }
 
+  function contactRows() {
+    var rows = state.contacts.slice();
+    var seen = {};
+    rows.forEach(function (contact) { seen[String(contact.chatId)] = true; });
+    state.chats.forEach(function (chat) {
+      if (seen[String(chat.id)]) return;
+      rows.push({
+        chatId: chat.id,
+        name: chat.visitorName,
+        email: chat.visitorEmail,
+        phone: chat.visitorPhone,
+        createdAt: chat.updatedAt,
+      });
+    });
+    return rows;
+  }
+
   function fillContacts() {
     var body = document.getElementById('gf-chat-contacts-body');
     if (!body) return;
     if (contactsPage) contactsPage.dataset.mode = window.innerWidth < 800 ? 'cards' : 'table';
     body.textContent = '';
-    if (!state.contacts.length) {
+    var people = contactRows();
+    if (!people.length) {
       var empty = document.createElement('div');
-      empty.textContent = 'No saved contacts yet. A visitor’s email and phone number appear here when they start a chat.';
-      empty.style.cssText = 'padding:28px 8px;color:#4a5568;font-size:15px;line-height:1.5';
+      empty.textContent = state.inboxError || 'No saved contacts yet. A visitor’s email and phone number appear here when they start a chat.';
+      empty.style.cssText = 'padding:28px 8px;color:' + (state.inboxError ? '#9b2c2c' : '#4a5568') + ';font-size:15px;line-height:1.5';
       body.appendChild(empty);
       return;
     }
     if (window.innerWidth < 800) {
-      state.contacts.forEach(function (contact) {
+      people.forEach(function (contact) {
         var card = document.createElement('article');
         card.style.cssText = 'background:#fff;border:1px solid #e6eed4;border-radius:12px;padding:14px;margin:0 0 12px';
         var top = document.createElement('div');
@@ -290,7 +381,7 @@
     });
     head.appendChild(headRow);
     var rows = document.createElement('tbody');
-    state.contacts.forEach(function (contact) {
+    people.forEach(function (contact) {
       var row = document.createElement('tr');
       function cell(value, strong) {
         var item = document.createElement('td');
@@ -352,6 +443,7 @@
     document.body.appendChild(contactsPage);
     paintContactsLink();
     fillContacts();
+    refreshInbox();
     loadContacts();
   }
 
@@ -392,8 +484,8 @@
     list.textContent = '';
     if (!state.chats.length) {
       var empty = document.createElement('div');
-      empty.textContent = 'No chats yet. A visitor message will show here.';
-      empty.style.cssText = 'padding:16px;color:#4a5568;font-size:13px;line-height:1.45';
+      empty.textContent = state.inboxError || 'No chats yet. A visitor message will show here.';
+      empty.style.cssText = 'padding:16px;color:' + (state.inboxError ? '#9b2c2c' : '#4a5568') + ';font-size:13px;line-height:1.45';
       list.appendChild(empty);
       return;
     }
@@ -417,7 +509,7 @@
         dot.style.cssText = 'margin-top:4px;font-size:11px;font-weight:800;color:#5f8a00';
         item.appendChild(dot);
       }
-      item.addEventListener('click', function () { openThread(chat.id); });
+      item.setAttribute('data-chat', String(chat.id));
       list.appendChild(item);
     });
   }
@@ -428,7 +520,7 @@
     var nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
     stream.textContent = '';
     var thread = state.thread && String(state.thread.id) === String(state.active) ? state.thread : null;
-    var messages = thread ? thread.messages : [];
+    var messages = thread && Array.isArray(thread.messages) ? thread.messages : [];
     if (thread && (thread.visitorEmail || thread.visitorPhone)) {
       var card = document.createElement('div');
       card.style.cssText = 'margin-bottom:12px;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #e6eed4';
@@ -443,6 +535,12 @@
       tel.style.cssText = 'font-size:13px;color:#2d3748';
       card.append(who, mail, tel);
       stream.appendChild(card);
+    }
+    if (state.error) {
+      var problem = document.createElement('div');
+      problem.textContent = state.error;
+      problem.style.cssText = 'margin-bottom:10px;padding:8px 10px;border-radius:8px;background:#fff4f4;color:#9b2c2c;font-size:13px';
+      stream.appendChild(problem);
     }
     if (!state.active) {
       var hint = document.createElement('div');
@@ -513,7 +611,14 @@
 
     var list = document.createElement('div');
     list.id = 'gf-chat-list';
-    list.style.cssText = 'width:240px;max-width:46%;border-right:1px solid #eef2e8;overflow:auto;background:#fafbf8';
+    list.style.cssText = 'width:240px;max-width:46%;flex:0 0 240px;border-right:1px solid #eef2e8;overflow:auto;background:#fafbf8;position:relative;z-index:1';
+    list.addEventListener('click', function (event) {
+      var row = event.target.closest ? event.target.closest('[data-chat]') : null;
+      if (!row || !list.contains(row)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openThread(row.getAttribute('data-chat'));
+    });
 
     var thread = document.createElement('div');
     thread.style.cssText = 'flex:1;display:flex;flex-direction:column;min-width:0;background:#f7f8f4';
@@ -606,7 +711,7 @@
 
   function beat() {
     if (!token()) return;
-    fetch('/admin/api/chat/presence', { method: 'POST', headers: authHeaders(true), body: '{}' }).catch(function () {});
+    fetch(staffPath('/gf-chat.php?op=presence'), { method: 'POST', headers: authHeaders(true), credentials: 'same-origin', body: '{}' }).catch(function () {});
   }
 
   setInterval(mount, 800);

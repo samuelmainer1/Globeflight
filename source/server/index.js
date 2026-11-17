@@ -1272,10 +1272,27 @@ function addShipmentUpdate(shipment, body) {
   return update;
 }
 
+function chatFrontPath(method, url) {
+  if ((url.pathname.replace(/\/+$/, '') || '/') !== '/gf-chat.php') return '';
+  const op = url.searchParams.get('op') || '';
+  const id = url.searchParams.get('id') || '';
+  if (method === 'GET' && op === '') return '/admin/api/chat';
+  if (method === 'POST' && op === 'start') return '/admin/api/chat/start';
+  if (method === 'POST' && op === 'messages') return '/admin/api/chat/messages';
+  if (method === 'POST' && op === 'presence') return '/admin/api/chat/presence';
+  if (method === 'GET' && op === 'inbox') return '/admin/api/chat/inbox';
+  if (method === 'GET' && op === 'contacts') return '/admin/api/chat/contacts';
+  if (method === 'GET' && op === 'thread' && /^\d+$/.test(id)) return `/admin/api/chat/inbox/${id}`;
+  if (method === 'POST' && op === 'reply' && /^\d+$/.test(id)) return `/admin/api/chat/inbox/${id}/reply`;
+  return '';
+}
+
 async function handle(req, res) {
   const url = new URL(req.url || '/', `http://127.0.0.1:${PORT}`);
-  const pathname = url.pathname.replace(/\/+$/, '') || '/';
+  let pathname = url.pathname.replace(/\/+$/, '') || '/';
   const method = req.method || 'GET';
+  const frontPath = chatFrontPath(method, url);
+  if (frontPath) pathname = frontPath;
 
   if (method === 'GET' && pathname.startsWith('/uploads/')) {
     const name = path.basename(decodeURIComponent(pathname));
