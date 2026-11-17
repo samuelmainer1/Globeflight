@@ -1,15 +1,17 @@
 (function () {
+  if (window.__gfAdsense) return;
+  window.__gfAdsense = true;
+
   var CLIENT = "ca-pub-5935226106762588";
   var SLOT = "7789598244";
   var MARK = /\[\[ad(?::(\d+))?\]\]/g;
 
   function loadScript() {
-    if (document.querySelector("script[data-gf-adsense]")) return;
+    if (document.querySelector('script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]')) return;
     var script = document.createElement("script");
     script.async = true;
     script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + CLIENT;
     script.crossOrigin = "anonymous";
-    script.setAttribute("data-gf-adsense", "1");
     document.head.appendChild(script);
   }
 
