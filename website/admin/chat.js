@@ -9,7 +9,11 @@
   }
 
   function authHeaders(json) {
-    var headers = { Authorization: token() ? 'Bearer ' + token() : '' };
+    var headers = {};
+    if (token()) {
+      headers.Authorization = 'Bearer ' + token();
+      headers['X-Gf-Admin'] = token();
+    }
     if (json) headers['Content-Type'] = 'application/json';
     return headers;
   }

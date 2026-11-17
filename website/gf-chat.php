@@ -485,16 +485,19 @@ function gf_chat_authorization() {
     foreach ($headerBags as $headers) {
         if (!is_array($headers)) continue;
         foreach ($headers as $name => $value) {
-            if (strtolower((string) $name) === 'authorization') $found[] = $value;
+            $lower = strtolower((string) $name);
+            if ($lower === 'authorization' || $lower === 'x-gf-admin') $found[] = $value;
         }
     }
-    foreach (array('HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'Authorization') as $key) {
+    foreach (array('HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION', 'Authorization', 'HTTP_X_GF_ADMIN') as $key) {
         if (!empty($_SERVER[$key])) $found[] = $_SERVER[$key];
         $env = getenv($key);
         if (is_string($env) && $env !== '') $found[] = $env;
     }
     foreach ($found as $value) {
         $value = trim((string) $value);
+        if ($value === '') continue;
+        if (stripos($value, 'Bearer ') !== 0) $value = 'Bearer ' . $value;
         if (preg_match('/^Bearer\s+\S+$/i', $value)) return $value;
     }
     return '';

@@ -75,6 +75,9 @@ unset($_SERVER['HTTP_AUTHORIZATION']);
 $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] = 'Bearer redirected-token';
 check('rewritten sign-in is read', gf_chat_authorization() === 'Bearer redirected-token');
 unset($_SERVER['REDIRECT_HTTP_AUTHORIZATION']);
+$_SERVER['HTTP_X_GF_ADMIN'] = 'dashboard-token';
+check('dashboard header is read', gf_chat_authorization() === 'Bearer dashboard-token');
+unset($_SERVER['HTTP_X_GF_ADMIN']);
 check('missing sign-in is refused', gf_chat_authorization() === '');
 
 $profile = gf_chat_profile_user(array('user' => array('id' => 4, 'role' => 'superadmin', 'fullName' => 'Sam')));
