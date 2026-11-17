@@ -111,4 +111,11 @@ check('chat alerts no longer use the customer service inbox', !in_array('cs@glob
 $profile = gf_chat_profile_user(array('user' => array('id' => 4, 'role' => 'superadmin', 'fullName' => 'Sam')));
 check('profile user is read', is_array($profile) && $profile['role'] === 'superadmin');
 
+$db['presence'] = array();
+$away = gf_chat_dispatch($db, 'GET', '', '', array(), '', null);
+check('visitors see support away before a dashboard sign-in', $away[1]['data']['staffOnline'] === false);
+$db['presence']['4'] = (int) round(microtime(true) * 1000);
+$online = gf_chat_dispatch($db, 'GET', '', '', array(), '', null);
+check('visitors see support online while the dashboard is open', $online[1]['data']['staffOnline'] === true);
+
 exit($failures === 0 ? 0 : 1);
