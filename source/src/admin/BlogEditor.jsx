@@ -21,6 +21,8 @@ export default function BlogEditor({ value, onChange }) {
   const fileRef = useRef(null);
   const [error, setError] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [htmlMode, setHtmlMode] = useState(false);
+  const [source, setSource] = useState(value || '');
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
@@ -64,18 +66,43 @@ export default function BlogEditor({ value, onChange }) {
 
   if (!editor) return <p className="text-sm text-gray-500">Opening the editor...</p>;
 
+  function showHtml() {
+    const next = editor.getHTML();
+    setSource(next);
+    setHtmlMode(true);
+  }
+
+  function showVisual() {
+    editor.commands.setContent(source || '', { emitUpdate: false });
+    onChange(editor.getHTML());
+    setHtmlMode(false);
+  }
+
   return (
     <div className="blog-editor rounded-lg border border-gray-300 bg-white">
       <div className="flex flex-wrap gap-1 border-b px-2 py-2">
-        <ToolButton active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()}>Bold</ToolButton>
-        <ToolButton active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()}>Italic</ToolButton>
-        <ToolButton active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>Heading</ToolButton>
-        <ToolButton active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()}>List</ToolButton>
-        <ToolButton active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()}>Numbered</ToolButton>
-        <ToolButton active={editor.isActive('link')} onClick={addLink}>Link</ToolButton>
-        <ToolButton onClick={() => fileRef.current?.click()}>{uploading ? 'Uploading...' : 'Image'}</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} disabled={htmlMode}>Bold</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} disabled={htmlMode}>Italic</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} disabled={htmlMode}>Heading</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} disabled={htmlMode}>List</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} disabled={htmlMode}>Numbered</ToolButton>
+        <ToolButton active={!htmlMode && editor.isActive('link')} onClick={addLink} disabled={htmlMode}>Link</ToolButton>
+        <ToolButton onClick={() => fileRef.current?.click()} disabled={htmlMode}>{uploading ? 'Uploading...' : 'Image'}</ToolButton>
+        <ToolButton active={htmlMode} onClick={htmlMode ? showVisual : showHtml}>HTML</ToolButton>
       </div>
-      <EditorContent editor={editor} />
+      {htmlMode ? (
+        <textarea
+          className="blog-editor-html"
+          value={source}
+          spellCheck="false"
+          onChange={(event) => {
+            setSource(event.target.value);
+            onChange(event.target.value);
+          }}
+        />
+      ) : (
+        <EditorContent editor={editor} />
+      )}
       <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden" onChange={addImage} />
       {error && <p className="border-t px-3 py-2 text-sm text-red-700">{error}</p>}
     </div>
