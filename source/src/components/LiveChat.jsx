@@ -43,10 +43,9 @@ export default function LiveChat() {
   async function load() {
     const session = sessionRef.current;
     const token = currentToken();
-    if (!token) return;
     try {
-      const response = await fetch("/admin/api/chat", {
-        headers: { "X-Chat-Token": token },
+      const response = await fetch("/gf-chat.php", {
+        headers: token ? { "X-Chat-Token": token } : {},
       });
       if (!stillThisChat(session, token)) return;
       if (response.status === 404) {
@@ -72,7 +71,6 @@ export default function LiveChat() {
   }
 
   useEffect(() => {
-    if (!hasChat) return undefined;
     load();
     const timer = setInterval(load, open ? 10000 : 30000);
     return () => clearInterval(timer);
@@ -120,7 +118,7 @@ export default function LiveChat() {
     setSending(true);
     setError("");
     try {
-      const response = await fetch("/admin/api/chat/start", {
+      const response = await fetch("/gf-chat.php?op=start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -157,7 +155,7 @@ export default function LiveChat() {
     setSending(true);
     setError("");
     try {
-      const response = await fetch("/admin/api/chat/messages", {
+      const response = await fetch("/gf-chat.php?op=messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -185,7 +183,7 @@ export default function LiveChat() {
     }
   }
 
-  const status = staffOnline ? "Customer support is here" : "Customer support is away";
+  const status = staffOnline ? "Customer Support is Online" : "Customer support is away";
 
   return (
     <div
@@ -208,7 +206,7 @@ export default function LiveChat() {
                 />
                 <div className="min-w-0">
                   <h2 className="truncate text-base font-bold leading-tight">Globeflight Kenya</h2>
-                  <p className="truncate text-xs">Globeflight Support team</p>
+                  <p className="truncate text-xs">{status}</p>
                 </div>
               </div>
             ) : (
