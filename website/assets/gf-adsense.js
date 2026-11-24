@@ -3,7 +3,8 @@
   window.__gfAdsense = true;
 
   var CLIENT = "ca-pub-5935226106762588";
-  var SLOT = "7789598244";
+  var SLOT = "1392941784";
+  var LAYOUT = "-fb+5w+4e-db+86";
   var MARK = /\[\[ad(?::(\d+))?\]\]/g;
 
   function loadScript() {
@@ -32,9 +33,18 @@
     ad.style.margin = "1.5rem 0";
     ad.setAttribute("data-ad-client", CLIENT);
     ad.setAttribute("data-ad-slot", slot || SLOT);
-    ad.setAttribute("data-ad-format", "auto");
-    ad.setAttribute("data-full-width-responsive", "true");
+    if (!slot || slot === SLOT) {
+      ad.setAttribute("data-ad-format", "fluid");
+      ad.setAttribute("data-ad-layout-key", LAYOUT);
+    } else {
+      ad.setAttribute("data-ad-format", "auto");
+      ad.setAttribute("data-full-width-responsive", "true");
+    }
     return ad;
+  }
+
+  function markerOnly(text) {
+    return /^\[\[ad(?::\d+)?\]\]$/.test(String(text || "").replace(/\u00a0/g, " ").trim());
   }
 
   function replaceMarkers(root) {
@@ -48,6 +58,12 @@
       var text = textNode.nodeValue;
       var parent = textNode.parentNode;
       if (!parent) return;
+      if (markerOnly(parent.textContent) && parent.parentNode) {
+        MARK.lastIndex = 0;
+        var only = MARK.exec(parent.textContent);
+        if (only) parent.parentNode.replaceChild(makeAd(only[1]), parent);
+        return;
+      }
       MARK.lastIndex = 0;
       var fragment = document.createDocumentFragment();
       var last = 0;
