@@ -8,7 +8,10 @@
   var MARK = /\[\[ad(?::(\d+))?\]\]/g;
 
   function loadScript() {
-    if (document.querySelector('script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]')) return;
+    var scripts = document.querySelectorAll('script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]');
+    for (var i = 0; i < scripts.length; i++) {
+      if (!scripts[i].closest("#root")) return;
+    }
     var script = document.createElement("script");
     script.async = true;
     script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + CLIENT;
@@ -92,10 +95,8 @@
     if (!hasMarker && !pending) return;
     busy = true;
     try {
-      if (hasMarker) {
-        loadScript();
-        replaceMarkers(root);
-      }
+      loadScript();
+      if (hasMarker) replaceMarkers(root);
       root.querySelectorAll("ins.adsbygoogle[data-ad-client]:not([data-gf-pushed])").forEach(push);
     } finally {
       busy = false;
